@@ -27,7 +27,7 @@ EXPOSE 8000
 # NOT baked into this (attested) image — they're private state on /state.
 CMD ["meta-llama/Llama-3.1-8B-Instruct", \
      "--enable-lora", \
-     "--max-lora-rank", "32", \
+     "--max-lora-rank", "64", \
      "--max-loras", "4", \
      "--max-cpu-loras", "16", \
      "--gpu-memory-utilization", "0.4"]

@@ -21,3 +21,8 @@ TRAINER_URL = os.environ.get("TRAINER_URL", "http://localhost:9100")  # trainer 
 
 # Shared demo key (gates access). Per-user encryption key comes per-request.
 DEMO_KEY = os.environ.get("PERSONALIZATION_DEMO_KEY", "demo")
+
+# Base model name served by the vLLM (its --served-model-name). A chat request
+# with `use_base: true` routes here instead of the caller's adapter, for the
+# base-vs-trained side-by-side demo.
+BASE_MODEL = os.environ.get("BASE_MODEL", "meta-llama/Llama-3.1-8B-Instruct")

@@ -50,6 +50,10 @@ def status(principal: Principal = Depends(authenticate)) -> dict:
 
 @app.post("/v1/chat/completions")
 async def chat(body: dict, principal: Principal = Depends(authenticate)) -> dict:
+    # Demo side-by-side: `use_base: true` routes to the base model instead of the
+    # caller's adapter (base is always loaded, so no readiness check or fallback).
+    if body.pop("use_base", False):
+        return await serving.chat(config.BASE_MODEL, body)
     if registry.get(principal.adapter_id)["status"] != "ready":
         raise HTTPException(status_code=409, detail="adapter not ready")
     try:
