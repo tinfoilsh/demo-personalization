@@ -18,8 +18,13 @@ from pathlib import Path
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 
+# Domain-separated from the public adapter id (auth._ID_DOMAIN), so the blob's
+# filename (= the id) reveals nothing about the key that decrypts it.
+_ENC_DOMAIN = b"tinfoil-personalization/enc\x00"
+
+
 def _key(encryption_key: str) -> bytes:
-    return hashlib.sha256(encryption_key.encode()).digest()
+    return hashlib.sha256(_ENC_DOMAIN + encryption_key.encode()).digest()
 
 
 def encrypt_dir(src_dir: Path, dest_file: Path, encryption_key: str) -> None:

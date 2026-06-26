@@ -1,40 +1,32 @@
-"""In-memory user -> adapter state.
+"""Job status, keyed by adapter id (which is derived from the user's key).
 
-The one bit of state the control server must keep: which user owns which adapter
-and whether it's trained yet, so chat requests route to the right `model`.
-
-In-memory for the demo. In prod this persists to the encrypted volume so it
-survives a restart (the adapters themselves already live there).
+No persistence, no user map. The durable record of a trained adapter is its
+encrypted blob on disk — named by the key-derived adapter id, decryptable only by
+that key. So control restarts lose nothing that matters: disk is the source of
+truth, and the in-memory dict below is just transient status for this process
+lifetime (training/failed, and mock results which have no blob).
 """
 
-from dataclasses import dataclass
-from typing import Literal
+from pathlib import Path
 
-Status = Literal["none", "training", "ready", "failed"]
-
-
-@dataclass
-class UserState:
-    user_id: str
-    adapter_name: str
-    status: Status = "none"
-    job_id: str | None = None
-    adapter_blob: str | None = None  # encrypted blob on persistent disk (None in mock)
-    loaded: bool = False             # decrypted + registered in serving this lifetime
-    error: str | None = None
+from control_server import config
 
 
-_users: dict[str, UserState] = {}
+def blob_path(adapter_id: str) -> Path:
+    return config.ADAPTERS_DIR / f"{adapter_id}.enc"
 
 
-def get(user_id: str, adapter_name: str) -> UserState:
-    if user_id not in _users:
-        _users[user_id] = UserState(user_id=user_id, adapter_name=adapter_name)
-    return _users[user_id]
+# adapter_id -> {"status", "mean_reward", "error", ...} for THIS process lifetime
+_status: dict[str, dict] = {}
 
 
-def set_status(user_id: str, status: Status, **fields) -> None:
-    state = _users[user_id]
-    state.status = status
-    for k, v in fields.items():
-        setattr(state, k, v)
+def mark(adapter_id: str, **fields) -> None:
+    _status[adapter_id] = {**_status.get(adapter_id, {}), **fields}
+
+
+def get(adapter_id: str) -> dict:
+    # A real adapter on disk is "ready" regardless of in-memory state (it survives
+    # restarts); the in-memory entry covers in-flight jobs and mock results.
+    if blob_path(adapter_id).exists():
+        return {**_status.get(adapter_id, {}), "status": "ready"}
+    return _status.get(adapter_id, {"status": "none"})

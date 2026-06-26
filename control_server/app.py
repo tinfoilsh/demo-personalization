@@ -37,40 +37,29 @@ async def train(
 ) -> dict:
     if not req.documents:
         raise HTTPException(status_code=400, detail="no documents")
-    state = registry.get(principal.user_id, principal.adapter_name)
-    if state.status == "training":
+    if registry.get(principal.adapter_id)["status"] == "training":
         raise HTTPException(status_code=409, detail="already training")
-    job_id = training.start_training(principal, req.documents)
-    return {"job_id": job_id, "status": "training", "adapter": principal.adapter_name}
+    training.start_training(principal, req.documents)
+    return {"adapter": principal.adapter_name, "status": "training"}
 
 
 @app.get("/status")
 def status(principal: Principal = Depends(authenticate)) -> dict:
-    state = registry.get(principal.user_id, principal.adapter_name)
-    return {
-        "adapter": state.adapter_name,
-        "status": state.status,
-        "job_id": state.job_id,
-        "error": state.error,
-    }
+    return {"adapter": principal.adapter_name, **registry.get(principal.adapter_id)}
 
 
 @app.post("/v1/chat/completions")
 async def chat(body: dict, principal: Principal = Depends(authenticate)) -> dict:
-    state = registry.get(principal.user_id, principal.adapter_name)
-    if state.status != "ready":
-        raise HTTPException(
-            status_code=409, detail=f"adapter not ready (status={state.status})"
-        )
+    if registry.get(principal.adapter_id)["status"] != "ready":
+        raise HTTPException(status_code=409, detail="adapter not ready")
     try:
         return await serving.chat(principal.adapter_name, body)
     except httpx.HTTPStatusError as e:
-        # Serving may have restarted and lost its in-RAM adapters while control
-        # kept its state — vLLM 404s the unknown model. The encrypted blob on disk
-        # survives, so re-decrypt with the user's key and retry once. (No flag to
-        # trust: we react to serving's actual state, not our memory of it.)
-        if state.adapter_blob and e.response.status_code in (400, 404):
-            await training.load_adapter(principal, state.adapter_blob)
-            registry.set_status(principal.user_id, "ready", loaded=True)
+        # Serving may have restarted and lost its in-RAM adapters — vLLM 404s the
+        # unknown model. The encrypted blob on disk survives, so re-decrypt with the
+        # user's key and retry once. (No flag to trust: we react to serving's actual
+        # state, not our memory of it.)
+        if registry.blob_path(principal.adapter_id).exists() and e.response.status_code in (400, 404):
+            await training.load_adapter(principal)
             return await serving.chat(principal.adapter_name, body)
         raise

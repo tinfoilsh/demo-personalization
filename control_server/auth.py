@@ -1,13 +1,11 @@
-"""Dual-key auth, per the README: every request carries a shared demo key plus a
-per-user encryption key.
+"""Auth. A shared demo key gates access; the per-request encryption key IS the
+identity — there is no user/account concept.
 
-  - demo key      → gates access to the demo (one shared secret).
-  - encryption key → identifies the user AND (in prod) encrypts their corpus and
-    adapter at rest. We never store it; we derive a stable user_id from it.
-
-In production the encryption key would key the at-rest encryption of the user's
-corpus and LoRA adapter on the shared volume. Here we only derive identity from
-it; the crypto is a TODO marked at the storage sites.
+The key deterministically derives a public `adapter_id` (used as the blob filename
+and the vLLM model name) and, separately, the AES key that encrypts the blob. The
+two derivations are domain-separated, so the public id (a filename on disk) reveals
+nothing about the decryption key. Nothing about the caller is ever stored: their
+key names and decrypts their adapter, and that's the whole identity model.
 """
 
 import hashlib
@@ -17,15 +15,21 @@ from fastapi import Header, HTTPException
 
 from control_server import config
 
+_ID_DOMAIN = b"tinfoil-personalization/id\x00"
+
 
 @dataclass
 class Principal:
-    user_id: str
     encryption_key: str
 
     @property
+    def adapter_id(self) -> str:
+        """Public id derived from the key — names the blob + the vLLM model."""
+        return hashlib.sha256(_ID_DOMAIN + self.encryption_key.encode()).hexdigest()[:16]
+
+    @property
     def adapter_name(self) -> str:
-        return f"user-{self.user_id}"
+        return f"adapter-{self.adapter_id}"
 
 
 def authenticate(
@@ -36,5 +40,4 @@ def authenticate(
         raise HTTPException(status_code=401, detail="bad demo key")
     if len(x_encryption_key) < 8:
         raise HTTPException(status_code=401, detail="encryption key too short")
-    user_id = hashlib.sha256(x_encryption_key.encode()).hexdigest()[:16]
-    return Principal(user_id=user_id, encryption_key=x_encryption_key)
+    return Principal(encryption_key=x_encryption_key)

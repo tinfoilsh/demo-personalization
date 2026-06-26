@@ -71,7 +71,7 @@ args = {{ corpus_path = "{corpus_path}" }}
 [inference]
 """
 
-# job_id -> {"status": ..., "adapter_blob": ..., "error": ..., "mock": ..., "mean_reward": ...}
+# adapter_id -> {"status": ..., "adapter_blob": ..., "error": ..., "mock": ..., "mean_reward": ...}
 _jobs: dict[str, dict] = {}
 
 
@@ -111,7 +111,7 @@ def _final_adapter_dir(job_dir: Path) -> Path:
     return steps[-1]
 
 
-async def _run_mock(job_id: str, documents: list[str], encryption_key: str) -> None:
+async def _run_mock(adapter_id: str, documents: list[str], encryption_key: str) -> None:
     """No-GPU path: real env + judge against Tinfoil, no gradient step, no adapter,
     nothing on disk (corpus stays in memory)."""
     from personal_style import load_environment
@@ -130,7 +130,7 @@ async def _run_mock(job_id: str, documents: list[str], encryption_key: str) -> N
         o["reward"] for o in results.get("outputs", []) if o.get("reward") is not None
     ]
     mean_reward = statistics.mean(rewards) if rewards else None
-    _jobs[job_id] = {
+    _jobs[adapter_id] = {
         "status": "ready",
         "adapter_blob": None,  # no adapter in mock — serving stays on base
         "mock": True,
@@ -138,39 +138,43 @@ async def _run_mock(job_id: str, documents: list[str], encryption_key: str) -> N
     }
 
 
-async def _run(job_id: str, documents: list[str], encryption_key: str) -> None:
-    job_dir = RAM_DIR / job_id  # RAM: corpus, toml, plaintext weights
+async def _run(adapter_id: str, documents: list[str], encryption_key: str) -> None:
+    job_dir = RAM_DIR / adapter_id  # RAM: corpus, toml, plaintext weights
     job_dir.mkdir(parents=True, exist_ok=True)
     corpus_path = _write_corpus_ram(job_dir, documents)
     toml_path = _render_config(job_dir, corpus_path)
 
     proc = await asyncio.create_subprocess_exec(
-        "uv", "run", "rl", "@", toml_path.as_posix(),
+        "uv",
+        "run",
+        "rl",
+        "@",
+        toml_path.as_posix(),
         cwd=REPO_DIR,
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.DEVNULL,
     )
     rc = await proc.wait()
     if rc != 0:
-        _jobs[job_id] = {"status": "failed", "error": f"rl exited {rc}"}
+        _jobs[adapter_id] = {"status": "failed", "error": f"rl exited {rc}"}
         return
     try:
         adapter_dir = _final_adapter_dir(job_dir)
-        # Encrypt the plaintext adapter (in RAM) to a single blob on the
-        # persistent volume; control decrypts it into RAM for serving.
-        blob = ADAPTERS_DIR / f"{job_id}.enc"
+        # Encrypt the plaintext adapter (in RAM) to a blob on the persistent
+        # volume, named by adapter_id; control decrypts it into RAM for serving.
+        blob = ADAPTERS_DIR / f"{adapter_id}.enc"
         encrypt_dir(adapter_dir, blob, encryption_key)
     except FileNotFoundError as e:
-        _jobs[job_id] = {"status": "failed", "error": str(e)}
+        _jobs[adapter_id] = {"status": "failed", "error": str(e)}
         return
-    _jobs[job_id] = {"status": "ready", "adapter_blob": blob.as_posix()}
+    _jobs[adapter_id] = {"status": "ready", "adapter_blob": blob.as_posix()}
 
 
-def start(job_id: str, documents: list[str], encryption_key: str) -> None:
-    _jobs[job_id] = {"status": "training"}
+def start(adapter_id: str, documents: list[str], encryption_key: str) -> None:
+    _jobs[adapter_id] = {"status": "training"}
     runner = _run_mock if MOCK_MODE else _run
-    asyncio.create_task(runner(job_id, documents, encryption_key))
+    asyncio.create_task(runner(adapter_id, documents, encryption_key))
 
 
-def get(job_id: str) -> dict:
-    return _jobs.get(job_id, {"status": "unknown"})
+def get(adapter_id: str) -> dict:
+    return _jobs.get(adapter_id, {"status": "unknown"})
