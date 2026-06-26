@@ -19,7 +19,6 @@ from control_server.auth import Principal, authenticate
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     config.DATA_DIR.mkdir(parents=True, exist_ok=True)
-    config.JOBS_DIR.mkdir(parents=True, exist_ok=True)
     yield
 
 
@@ -31,7 +30,9 @@ class TrainRequest(BaseModel):
 
 
 @app.post("/train")
-async def train(req: TrainRequest, principal: Principal = Depends(authenticate)) -> dict:
+async def train(
+    req: TrainRequest, principal: Principal = Depends(authenticate)
+) -> dict:
     if not req.documents:
         raise HTTPException(status_code=400, detail="no documents")
     state = registry.get(principal.user_id, principal.adapter_name)
@@ -56,5 +57,7 @@ def status(principal: Principal = Depends(authenticate)) -> dict:
 async def chat(body: dict, principal: Principal = Depends(authenticate)) -> dict:
     state = registry.get(principal.user_id, principal.adapter_name)
     if state.status != "ready":
-        raise HTTPException(status_code=409, detail=f"adapter not ready (status={state.status})")
+        raise HTTPException(
+            status_code=409, detail=f"adapter not ready (status={state.status})"
+        )
     return await serving.chat(principal.adapter_name, body)
