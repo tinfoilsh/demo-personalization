@@ -11,6 +11,10 @@ dependencies = [
     "jsonschema",
     "python-dotenv",
     "personal-style",
+    "fastapi",
+    "uvicorn[standard]",
+    "httpx",
+    "cryptography",
 ]
 
 [tool.uv.sources]
@@ -21,4 +25,4 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["tinfoil_llm"]
+packages = ["tinfoil_llm", "control_server", "trainer_service", "serving_mock", "cryptobox"]

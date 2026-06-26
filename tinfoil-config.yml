@@ -1,0 +1,124 @@
+# No-GPU (mock) deploy of the personalization demo. Three containers on one CVM,
+# each its own image (built + digest-pinned by .github/workflows/tinfoil-release.yml).
+# Exercises the full system — attestation, container networking, dual-key auth, the
+# real env + Tinfoil judge, end-to-end chat — everything except the GPU-bound
+# learning and adapter serving.
+#
+# When the H200 lands: add `gpus: 1` here, give trainer + serving `runtime: nvidia`
+# + `gpus: all`, and build them from containers/{trainer,serving}/Dockerfile.gpu
+# (prime-rl, vLLM). Modeled on enclaves/confidential-realtime-models.
+#
+# Storage model (disk is NOT volume-encrypted):
+#   - corpus: socketed control -> trainer, kept in RAM; never persisted.
+#   - persistent `state` volume: only AES-GCM-encrypted adapter blobs.
+#   - decrypted adapters + prime-rl plaintext outputs: RAM only. On the GPU build,
+#     mount a shared ramdisk for DECRYPT_DIR (control+serving) and RAM_DIR
+#     (trainer) — e.g. under /mnt/ramdisk, like verifiable-reviewer. Mock writes
+#     nothing sensitive, so it doesn't need them.
+
+cvm-version: 0.10.4
+cpus: 8
+memory: 16384
+
+networks:
+  # trainer (judge) and serving (base model) call OUT to Tinfoil's gpt-oss-120b,
+  # so the network needs egress. (Could be tightened to an allowlist later.)
+  app:
+    egress: open
+
+containers:
+  - name: "control"
+    image: "ghcr.io/tinfoilsh/demo-personalization/control@sha256:0000000000000000000000000000000000000000000000000000000000000000" # placeholder - populated during release
+    restart: always
+    networks: ["app"]
+    env:
+      - STATE_DIR: "/state"
+      - SERVING_URL: "http://serving:8000"
+      - TRAINER_URL: "http://trainer:9100"
+      - DECRYPT_DIR: "/mnt/ramdisk/adapters" # decrypts blobs into RAM, shared with serving
+    secrets:
+      - PERSONALIZATION_DEMO_KEY
+    volumes:
+      - "state:/state" # encrypted adapter blobs
+      - "/mnt/ramdisk/adapters:/mnt/ramdisk/adapters" # RAM, shared with serving (decrypted)
+    command: [
+        "uvicorn",
+        "control_server.app:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "9000",
+        "--workers",
+        "1", # in-memory registry — must stay single-process
+      ]
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9000/docs"]
+      interval: 30s
+      timeout: 5s
+      start_period: 1m
+
+  - name: "trainer"
+    image: "ghcr.io/tinfoilsh/demo-personalization/trainer@sha256:0000000000000000000000000000000000000000000000000000000000000000" # placeholder - populated during release
+    restart: always
+    networks: ["app"]
+    env:
+      - STATE_DIR: "/state"
+      - MOCK_MODE: "1"
+      - RAM_DIR: "/mnt/ramdisk/jobs" # corpus + prime-rl plaintext outputs (real path)
+    secrets:
+      - TINFOIL_API_KEY # the in-enclave judge (gpt-oss-120b)
+    volumes:
+      - "state:/state" # writes encrypted adapter blobs here
+      - "/mnt/ramdisk/jobs:/mnt/ramdisk/jobs" # RAM (real path); mock writes nothing
+    command: [
+        "uvicorn",
+        "trainer_service.app:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "9100",
+        "--workers",
+        "1", # in-memory _jobs — must stay single-process
+      ]
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9100/docs"]
+      interval: 30s
+      timeout: 5s
+      start_period: 1m
+
+  - name: "serving"
+    image: "ghcr.io/tinfoilsh/demo-personalization/serving@sha256:0000000000000000000000000000000000000000000000000000000000000000" # placeholder - populated during release
+    restart: always
+    networks: ["app"]
+    secrets:
+      - TINFOIL_API_KEY # base model (gpt-oss-120b) in mock
+    volumes:
+      # Real vLLM reads decrypted adapters from this shared RAM dir (control writes
+      # them). Unused by serving_mock, but kept so the topology matches the GPU build.
+      - "/mnt/ramdisk/adapters:/mnt/ramdisk/adapters"
+    command:
+      [
+        "uvicorn",
+        "serving_mock.app:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+        "--workers",
+        "1",
+      ]
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/docs"]
+      interval: 30s
+      timeout: 5s
+      start_period: 1m
+
+shim:
+  upstream-port: 9000
+  upstream-container: control
+  tls-wildcard: true
+  authenticated: false # control enforces its own dual-key auth
+  paths:
+    - /train
+    - /status
+    - /v1/chat/completions

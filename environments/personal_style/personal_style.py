@@ -366,9 +366,25 @@ def _default_judge_client():
     ).client
 
 
+def load_corpus_file(path: str) -> list[str]:
+    """Read a user's writing from disk into a list of documents.
+
+    Supports `.jsonl` (one JSON object per line with a "text" field), `.json`
+    (a list of strings), and plain `.txt` (split into docs on blank lines).
+    This is what prime-rl passes via `args = { corpus_path = ... }`.
+    """
+    text = open(path, encoding="utf-8").read()
+    if path.endswith(".jsonl"):
+        return [json.loads(line)["text"] for line in text.splitlines() if line.strip()]
+    if path.endswith(".json"):
+        return json.loads(text)
+    return [doc.strip() for doc in text.split("\n\n") if doc.strip()]
+
+
 def load_environment(
     dataset: Dataset | None = None,
     user_texts: list[str] | None = None,
+    corpus_path: str | None = None,
     judge_client=None,
     judge_model: str | None = None,
     system_prompt: str | None = None,
@@ -384,15 +400,20 @@ def load_environment(
     Args:
         dataset: explicit (story_snippet, actual_continuation) dataset.
         user_texts: a user's raw documents; chunked into a dataset if `dataset`
-            is None. If both are None, a small built-in sample is used.
+            is None.
+        corpus_path: path to a user's writing on disk (jsonl/json/txt); read and
+            chunked if `dataset` and `user_texts` are both None. This is the arg
+            prime-rl forwards per user. If all three are None, a built-in sample.
         judge_client: OpenAI-compatible async client for the judge; defaults to a
             verified Tinfoil client.
-        judge_model: judge model name; defaults to $TINFOIL_JUDGE_MODEL or llama3-3-70b.
+        judge_model: judge model name; defaults to gpt-oss-120b.
     """
     judge_client = judge_client or _default_judge_client()
     judge_model = judge_model or "gpt-oss-120b"
 
     if dataset is None:
+        if user_texts is None and corpus_path is not None:
+            user_texts = load_corpus_file(corpus_path)
         dataset = (
             chunk_user_corpus(user_texts) if user_texts else create_sample_dataset()
         )
