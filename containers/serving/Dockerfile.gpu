@@ -2,7 +2,15 @@
 # point the serving container's build at this file. Stock vLLM; holds the base
 # model + every user's finished adapter, with runtime LoRA loading so the control
 # server can hot-load new adapters without a restart.
-FROM vllm/vllm-openai:latest
+#
+# vLLM is PINNED to v0.22.0. `:latest` resolved to v0.23.0, which serves
+# Qwen/Qwen3-4B-Instruct-2507 as deterministic garbage on the H200 (base model
+# included; transformers serves the same weights fine; reproduces across V0/V1,
+# --enforce-eager, and every attention backend). v0.22.0 is the version prime-rl
+# pins and validates against Qwen3-4B (its alphabet_sort example trains this exact
+# model on it), so it's a known-good serve path. If bumping, first verify a
+# coherent greedy /v1/completions of "The capital of France is" → Paris.
+FROM vllm/vllm-openai:v0.22.0@sha256:0fec7ec5f3e6bc168e54899935fb0557da908a4832a1dbc88e2debcf2f889416
 
 ENV VLLM_ALLOW_RUNTIME_LORA_UPDATING=True
 ENV NVIDIA_VISIBLE_DEVICES=0

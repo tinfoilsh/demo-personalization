@@ -61,6 +61,12 @@ name = "{base_model}"
 rank = {lora_rank}
 alpha = {lora_alpha}
 
+# Skip the full training checkpoint (optimizer + dataloader state, ~17 GB for a
+# 4B model). We never resume, and the RAM-backed tmpfs OOMs writing it; we only
+# need the weight checkpoint's adapter.
+[trainer.ckpt]
+weights_only = true
+
 # Write the LoRA adapter on its own (weights/step_N/lora_adapters, PEFT format)
 # so vLLM can load just the adapter instead of a merged full-model checkpoint.
 [trainer.ckpt.weights]
@@ -179,20 +185,33 @@ async def _run(adapter_id: str, documents: list[str], encryption_key: str) -> No
     # listing device 0 twice puts both on GPU 0 (filesystem weight-broadcast,
     # the default, needs no second GPU). The serving vLLM shares the same GPU.
     env = {**os.environ, "CUDA_VISIBLE_DEVICES": "0,0"}
-    proc = await asyncio.create_subprocess_exec(
-        "uv",
-        "run",
-        "rl",
-        "@",
-        toml_path.as_posix(),
-        cwd=RL_PROJECT_DIR,
-        env=env,
-        stdout=asyncio.subprocess.DEVNULL,
-        stderr=asyncio.subprocess.DEVNULL,
-    )
-    rc = await proc.wait()
+    # rl's full output goes to a log file in the job dir (RAM) so failures are
+    # debuggable — `tail` it at {RAM_DIR}/{adapter_id}/rl.log.
+    log_path = job_dir / "rl.log"
+    with open(log_path, "w") as logf:
+        proc = await asyncio.create_subprocess_exec(
+            "uv",
+            "run",
+            "rl",
+            "@",
+            toml_path.as_posix(),
+            cwd=RL_PROJECT_DIR,
+            env=env,
+            stdout=logf,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        rc = await proc.wait()
     if rc != 0:
-        _jobs[adapter_id] = {"status": "failed", "error": f"rl exited {rc}"}
+        tail = ""
+        try:
+            tail = "".join(log_path.read_text(errors="replace").splitlines(keepends=True)[-30:])
+        except Exception:  # noqa: BLE001
+            pass
+        _jobs[adapter_id] = {
+            "status": "failed",
+            "error": f"rl exited {rc}",
+            "log_tail": tail,
+        }
         return
     try:
         adapter_dir = _final_adapter_dir(job_dir)

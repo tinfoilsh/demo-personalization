@@ -119,8 +119,7 @@ containers:
     # Multi-LoRA vLLM. --gpu-memory-utilization is low so the trainer's FSDP +
     # rollout vLLM fit on the same GPU; raise it if there's spare VRAM.
     entrypoint: ["vllm", "serve"]
-    command:
-      [
+    command: [
         "Qwen/Qwen3-4B-Instruct-2507",
         "--served-model-name",
         "Qwen/Qwen3-4B-Instruct-2507",
@@ -131,6 +130,8 @@ containers:
         "4",
         "--max-cpu-loras",
         "16",
+        "--max-model-len", # Qwen3-4B advertises 262144 ctx; uncapped, vLLM needs
+        "8192", # 36 GiB KV cache and the engine refuses to start at util 0.2.
         "--gpu-memory-utilization",
         "0.2",
         "--host",
