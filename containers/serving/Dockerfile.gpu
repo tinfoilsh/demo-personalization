@@ -3,23 +3,29 @@
 # model + every user's finished adapter, with runtime LoRA loading so the control
 # server can hot-load new adapters without a restart.
 #
-# vLLM is PINNED to v0.22.0. `:latest` resolved to v0.23.0, which serves
-# Qwen/Qwen3-4B-Instruct-2507 as deterministic garbage on the H200 (base model
-# included; transformers serves the same weights fine; reproduces across V0/V1,
-# --enforce-eager, and every attention backend). v0.22.0 is the version prime-rl
-# pins and validates against Qwen3-4B (its alphabet_sort example trains this exact
-# model on it), so it's a known-good serve path. If bumping, first verify a
-# coherent greedy /v1/completions of "The capital of France is" → Paris.
+# vLLM is PINNED to v0.22.0 — the exact image Tinfoil's prod Qwen enclave runs
+# under CC, so it's a known-good serve path on the H200. We serve Llama because
+# Qwen3-4B-Instruct-2507 (Qwen3ForCausalLM) produces deterministic garbage through
+# vLLM on this CC box — independent of vLLM version, attention backend, eager mode,
+# or CUDA graphs — while transformers serves the same weights fine and Llama serves
+# correctly on the identical setup. If bumping vLLM or the model, first verify a
+# coherent greedy /v1/chat/completions of "capital of France" → Paris.
 FROM vllm/vllm-openai:v0.22.0@sha256:0fec7ec5f3e6bc168e54899935fb0557da908a4832a1dbc88e2debcf2f889416
 
 ENV VLLM_ALLOW_RUNTIME_LORA_UPDATING=True
 ENV NVIDIA_VISIBLE_DEVICES=0
 
+# Bridge prod's gated-Llama secret (LLAMA_HF_TOKEN) to the HF_TOKEN vLLM reads,
+# then exec `vllm serve`.
+COPY containers/serving/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]
+
 EXPOSE 8000
 # --gpu-memory-utilization kept low so the trainer's rollout vLLM fits on the same
 # H200 (see personalization.md §4). Adapters are loaded at runtime, so they are
 # NOT baked into this (attested) image — they're private state on /state.
-CMD ["--model", "Qwen/Qwen3-4B-Instruct-2507", \
+CMD ["meta-llama/Llama-3.1-8B-Instruct", \
      "--enable-lora", \
      "--max-lora-rank", "32", \
      "--max-loras", "4", \
