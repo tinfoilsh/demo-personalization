@@ -15,12 +15,14 @@ app = FastAPI(title="prime-rl trainer service")
 
 class JobRequest(BaseModel):
     adapter_id: str
-    documents: list[str]   # socketed in, never written to persistent disk
-    encryption_key: str    # encrypts the resulting adapter at rest (real mode)
+    documents: list[str]  # socketed in, never written to persistent disk
+    encryption_key: str  # encrypts the resulting adapter at rest (real mode)
 
 
 @app.post("/jobs")
-def create_job(req: JobRequest) -> dict:
+async def create_job(req: JobRequest) -> dict:
+    # async so runner.start() runs inside the event loop (it schedules the job via
+    # asyncio.create_task, which needs a running loop).
     runner.start(req.adapter_id, req.documents, req.encryption_key)
     return {"adapter_id": req.adapter_id, "status": "training"}
 

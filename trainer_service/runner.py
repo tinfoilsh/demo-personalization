@@ -170,10 +170,19 @@ async def _run(adapter_id: str, documents: list[str], encryption_key: str) -> No
     _jobs[adapter_id] = {"status": "ready", "adapter_blob": blob.as_posix()}
 
 
+async def _safe_run(adapter_id: str, documents: list[str], encryption_key: str) -> None:
+    """Run the job, marking it failed on ANY exception so it never hangs at
+    'training' (a bare create_task swallows exceptions otherwise)."""
+    fn = _run_mock if MOCK_MODE else _run
+    try:
+        await fn(adapter_id, documents, encryption_key)
+    except Exception as e:  # noqa: BLE001 — surface every failure to the client
+        _jobs[adapter_id] = {"status": "failed", "error": repr(e)}
+
+
 def start(adapter_id: str, documents: list[str], encryption_key: str) -> None:
     _jobs[adapter_id] = {"status": "training"}
-    runner = _run_mock if MOCK_MODE else _run
-    asyncio.create_task(runner(adapter_id, documents, encryption_key))
+    asyncio.create_task(_safe_run(adapter_id, documents, encryption_key))
 
 
 def get(adapter_id: str) -> dict:
