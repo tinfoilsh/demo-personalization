@@ -130,7 +130,7 @@ containers:
         "meta-llama/Llama-3.1-8B-Instruct",
         "--enable-lora",
         "--max-lora-rank",
-        "32",
+        "64",
         "--max-loras",
         "4",
         "--max-cpu-loras",
