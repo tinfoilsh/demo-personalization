@@ -28,7 +28,7 @@ networks:
 
 containers:
   - name: "control"
-    image: "ghcr.io/tinfoilsh/demo-personalization/control@sha256:0000000000000000000000000000000000000000000000000000000000000000" # placeholder - populated during release
+    image: "ghcr.io/tinfoilsh/demo-personalization/control@sha256:0cad4d4759cab4e61e1910abf8bca3846cffee43fb42b43f16faf32583a9be74" # v0.0.1
     restart: always
     networks: ["app"]
     env:
@@ -58,7 +58,7 @@ containers:
       start_period: 1m
 
   - name: "trainer"
-    image: "ghcr.io/tinfoilsh/demo-personalization/trainer@sha256:0000000000000000000000000000000000000000000000000000000000000000" # placeholder - populated during release
+    image: "ghcr.io/tinfoilsh/demo-personalization/trainer@sha256:86b13255abeeeb8c227e8bb1773b9437b335d8dc2e7dacc5bb3bb1c598daa84a" # v0.0.1
     restart: always
     networks: ["app"]
     env:
@@ -87,7 +87,7 @@ containers:
       start_period: 1m
 
   - name: "serving"
-    image: "ghcr.io/tinfoilsh/demo-personalization/serving@sha256:0000000000000000000000000000000000000000000000000000000000000000" # placeholder - populated during release
+    image: "ghcr.io/tinfoilsh/demo-personalization/serving@sha256:a66de22f34b70263031748a40a4b5d685d80e363d39b786f63d6c4d41bd38e60" # v0.0.1
     restart: always
     networks: ["app"]
     secrets:
