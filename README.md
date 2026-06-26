@@ -7,3 +7,5 @@ This server will expose an endpoint to train a model, and then to do inference w
 As a user you'll authenticate with an encryption key, and use the demo key we give you. YOu'll send both of these on every request.
 
 TBD on how we'll do the SDK or if we'll have a FE or what.
+
+## Architecture
