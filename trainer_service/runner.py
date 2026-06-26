@@ -4,10 +4,15 @@ supervises rollout-inference + orchestrator + env-server + trainer.
 
 Reads the user's corpus and writes the adapter under the shared volume, so the
 control container can hot-load it into serving afterwards.
+
+MOCK_MODE=1 (no-GPU deploys) runs the env + judge against Tinfoil instead of
+`uv run rl`: real environment, real judge, no gradient step, no adapter.
 """
 
 import asyncio
+import json
 import os
+import statistics
 from pathlib import Path
 
 STATE_DIR = Path(os.environ.get("STATE_DIR", "./state")).resolve()
@@ -17,6 +22,10 @@ MAX_STEPS = int(os.environ.get("MAX_STEPS", "50"))
 LORA_RANK = int(os.environ.get("LORA_RANK", "32"))
 ENV_ID = os.environ.get("ENV_ID", "personal-style")
 REPO_DIR = Path(__file__).resolve().parent.parent
+
+MOCK_MODE = os.environ.get("MOCK_MODE", "0") == "1"
+MOCK_N = int(os.environ.get("MOCK_N", "3"))
+MOCK_R = int(os.environ.get("MOCK_R", "2"))
 
 RL_TOML = """\
 max_steps = {max_steps}
@@ -80,6 +89,39 @@ def _final_adapter_dir(job_dir: Path) -> Path:
     return steps[-1]
 
 
+async def _run_mock(job_id: str, corpus_path: str) -> None:
+    """No-GPU path: run the real env + judge against Tinfoil, no gradient step."""
+    from personal_style import load_environment
+
+    from tinfoil_llm import POLICY_MODEL, policy_client
+
+    job_dir = JOBS_DIR / job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+
+    env = load_environment(corpus_path=corpus_path)
+    results = await env.evaluate(
+        client=policy_client(),
+        model=POLICY_MODEL,
+        num_examples=MOCK_N,
+        rollouts_per_example=MOCK_R,
+        save_results=False,
+    )
+    rewards = [
+        o["reward"] for o in results.get("outputs", []) if o.get("reward") is not None
+    ]
+    mean_reward = statistics.mean(rewards) if rewards else None
+    (job_dir / "mock_result.json").write_text(
+        json.dumps(results, indent=2, default=str)
+    )
+    # No adapter in mock — control skips the hot-load and serving stays on base.
+    _jobs[job_id] = {
+        "status": "ready",
+        "adapter_path": None,
+        "mock": True,
+        "mean_reward": mean_reward,
+    }
+
+
 async def _run(job_id: str, corpus_path: str) -> None:
     job_dir = JOBS_DIR / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
@@ -109,7 +151,7 @@ async def _run(job_id: str, corpus_path: str) -> None:
 
 def start(job_id: str, corpus_path: str) -> None:
     _jobs[job_id] = {"status": "training"}
-    asyncio.create_task(_run(job_id, corpus_path))
+    asyncio.create_task((_run_mock if MOCK_MODE else _run)(job_id, corpus_path))
 
 
 def get(job_id: str) -> dict:

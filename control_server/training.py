@@ -44,11 +44,13 @@ async def _drive(principal: Principal, job_id: str, corpus_path: str) -> None:
             break
 
     try:
-        await serving.hot_load(principal.adapter_name, job["adapter_path"])
+        # Mock jobs produce no adapter — serving stays on the base model.
+        if job.get("adapter_path"):
+            await serving.hot_load(principal.adapter_name, job["adapter_path"])
     except Exception as e:  # noqa: BLE001 — surface any handoff failure to the user
         registry.set_status(principal.user_id, "failed", error=str(e))
         return
-    registry.set_status(principal.user_id, "ready", adapter_path=job["adapter_path"])
+    registry.set_status(principal.user_id, "ready", adapter_path=job.get("adapter_path"))
 
 
 def start_training(principal: Principal, documents: list[str]) -> str:
