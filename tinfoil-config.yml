@@ -70,6 +70,11 @@ containers:
     volumes:
       - "state:/state" # writes encrypted adapter blobs here
       - "/mnt/ramdisk/jobs:/mnt/ramdisk/jobs" # RAM (real path); mock writes nothing
+    tmpfs:
+      # rootfs is read-only; the Tinfoil SDK (judge/policy attestation) caches
+      # sigstore material under ~/.cache, so /root and /tmp must be writable.
+      /root: size=256m,mode=0700,exec
+      /tmp: size=256m,mode=1777,exec
     command: [
         "uvicorn",
         "trainer_service.app:app",
@@ -96,6 +101,11 @@ containers:
       # Real vLLM reads decrypted adapters from this shared RAM dir (control writes
       # them). Unused by serving_mock, but kept so the topology matches the GPU build.
       - "/mnt/ramdisk/adapters:/mnt/ramdisk/adapters"
+    tmpfs:
+      # rootfs is read-only; the Tinfoil SDK (base-model attestation) caches
+      # sigstore material under ~/.cache, so /root and /tmp must be writable.
+      /root: size=256m,mode=0700,exec
+      /tmp: size=256m,mode=1777,exec
     command:
       [
         "uvicorn",
