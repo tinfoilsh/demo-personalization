@@ -19,9 +19,9 @@ its build job's `file:` at the `.gpu` Dockerfile and add the GPU keys to the con
 ## Run locally without Docker (no GPU)
 
 ```
-export TINFOIL_API_KEY=... DEMO_KEY=demo MOCK_MODE=1
-uv run uvicorn trainer_service.app:app --port 9100   # terminal 1
-uv run uvicorn serving_mock.app:app   --port 8000    # terminal 2
-uv run uvicorn control_server.app:app --port 9000    # terminal 3
-# then: DEMO_KEY=demo ENC_KEY=my-secret-key ./scripts/smoke_live.sh
+export TINFOIL_API_KEY=... PERSONALIZATION_DEMO_KEY=demo MOCK_MODE=1
+uv run uvicorn trainer_service.app:app --port 9100 --workers 1   # terminal 1
+uv run uvicorn serving_mock.app:app   --port 8000 --workers 1   # terminal 2
+uv run uvicorn control_server.app:app --port 9000 --workers 1   # terminal 3
+# then: PERSONALIZATION_DEMO_KEY=demo ENC_KEY=my-secret-key ./scripts/smoke_live.sh
 ```

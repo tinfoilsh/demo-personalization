@@ -20,4 +20,4 @@ SERVING_URL = os.environ.get("SERVING_URL", "http://localhost:8000")  # serving 
 TRAINER_URL = os.environ.get("TRAINER_URL", "http://localhost:9100")  # trainer service
 
 # Shared demo key (gates access). Per-user encryption key comes per-request.
-DEMO_KEY = os.environ.get("DEMO_KEY", "demo")
+DEMO_KEY = os.environ.get("PERSONALIZATION_DEMO_KEY", "demo")

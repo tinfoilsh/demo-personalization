@@ -21,7 +21,10 @@ cpus: 8
 memory: 16384
 
 networks:
-  app: {}
+  # trainer (judge) and serving (base model) call OUT to Tinfoil's gpt-oss-120b,
+  # so the network needs egress. (Could be tightened to an allowlist later.)
+  app:
+    egress: open
 
 containers:
   - name: "control"
@@ -34,18 +37,19 @@ containers:
       - TRAINER_URL: "http://trainer:9100"
       - DECRYPT_DIR: "/mnt/ramdisk/adapters" # decrypts blobs into RAM, shared with serving
     secrets:
-      - DEMO_KEY
+      - PERSONALIZATION_DEMO_KEY
     volumes:
       - "state:/state" # encrypted adapter blobs
       - "/mnt/ramdisk/adapters:/mnt/ramdisk/adapters" # RAM, shared with serving (decrypted)
-    command:
-      [
+    command: [
         "uvicorn",
         "control_server.app:app",
         "--host",
         "0.0.0.0",
         "--port",
         "9000",
+        "--workers",
+        "1", # in-memory registry — must stay single-process
       ]
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:9000/docs"]
@@ -66,14 +70,15 @@ containers:
     volumes:
       - "state:/state" # writes encrypted adapter blobs here
       - "/mnt/ramdisk/jobs:/mnt/ramdisk/jobs" # RAM (real path); mock writes nothing
-    command:
-      [
+    command: [
         "uvicorn",
         "trainer_service.app:app",
         "--host",
         "0.0.0.0",
         "--port",
         "9100",
+        "--workers",
+        "1", # in-memory _jobs — must stay single-process
       ]
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:9100/docs"]
@@ -92,7 +97,16 @@ containers:
       # them). Unused by serving_mock, but kept so the topology matches the GPU build.
       - "/mnt/ramdisk/adapters:/mnt/ramdisk/adapters"
     command:
-      ["uvicorn", "serving_mock.app:app", "--host", "0.0.0.0", "--port", "8000"]
+      [
+        "uvicorn",
+        "serving_mock.app:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+        "--workers",
+        "1",
+      ]
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8000/docs"]
       interval: 30s

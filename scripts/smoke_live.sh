@@ -2,13 +2,13 @@
 # Hit a running control server end-to-end (no GPU, mock mode).
 # Prereqs: the three services running (see deploy/README.md) + TINFOIL_API_KEY set.
 #
-#   DEMO_KEY=demo ENC_KEY=my-secret-key ./scripts/smoke_live.sh
+#   PERSONALIZATION_DEMO_KEY=demo ENC_KEY=my-secret-key ./scripts/smoke_live.sh
 set -euo pipefail
 
 CONTROL="${CONTROL:-http://localhost:9000}"
-DEMO_KEY="${DEMO_KEY:-demo}"
+PERSONALIZATION_DEMO_KEY="${PERSONALIZATION_DEMO_KEY:-demo}"
 ENC_KEY="${ENC_KEY:-my-secret-key}"
-H=(-H "x-demo-key: ${DEMO_KEY}" -H "x-encryption-key: ${ENC_KEY}")
+H=(-H "x-demo-key: ${PERSONALIZATION_DEMO_KEY}" -H "x-encryption-key: ${ENC_KEY}")
 
 echo "== /train =="
 curl -fsS "${H[@]}" -H "content-type: application/json" \
