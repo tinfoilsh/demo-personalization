@@ -39,6 +39,10 @@ MOCK_MODE = os.environ.get("MOCK_MODE", "0") == "1"
 MOCK_N = int(os.environ.get("MOCK_N", "3"))
 MOCK_R = int(os.environ.get("MOCK_R", "2"))
 
+# VRAM fraction for the rollout inference server. Capped (< serving + trainer
+# must all fit on the single GPU); tune live. See _run for the colocation env.
+INFER_GPU_UTIL = os.environ.get("INFER_GPU_UTIL", "0.2")
+
 RL_TOML = """\
 max_steps = {max_steps}
 seq_len = 2048
@@ -53,12 +57,21 @@ name = "{base_model}"
 rank = {lora_rank}
 alpha = {lora_alpha}
 
+# Write the LoRA adapter on its own (weights/step_N/lora_adapters, PEFT format)
+# so vLLM can load just the adapter instead of a merged full-model checkpoint.
+[trainer.ckpt.weights]
+save_adapter_separately = true
+
 [trainer.optim]
 lr = 1e-5
 
 [orchestrator]
 batch_size = 128
 group_size = 8
+
+# Rollouts must run against the adapter being trained, not the base model.
+[orchestrator.model.lora]
+name = "{env_id}"
 
 [orchestrator.train.sampling]
 max_completion_tokens = 768
@@ -68,7 +81,14 @@ id = "{env_id}"
 name = "{env_id}"
 args = {{ corpus_path = "{corpus_path}" }}
 
+# Rollout inference server. Colocated on the one GPU (see _run), so its memory
+# is capped to leave room for the FSDP trainer and the serving container.
 [inference]
+enable_lora = true
+gpu_memory_utilization = {infer_gpu_util}
+
+[inference.model]
+max_model_len = 2048
 """
 
 # adapter_id -> {"status": ..., "adapter_blob": ..., "error": ..., "mock": ..., "mean_reward": ...}
@@ -96,19 +116,25 @@ def _render_config(job_dir: Path, corpus_path: Path) -> Path:
             lora_alpha=LORA_RANK * 2,
             env_id=ENV_ID,
             corpus_path=corpus_path.as_posix(),
+            infer_gpu_util=INFER_GPU_UTIL,
         )
     )
     return toml_path
 
 
 def _final_adapter_dir(job_dir: Path) -> Path:
-    """prime-rl writes HF-compatible adapters to <output_dir>/weights/step_*."""
+    """With save_adapter_separately, prime-rl writes the PEFT LoRA adapter to
+    <output_dir>/weights/step_N/lora_adapters. That dir (adapter_config.json +
+    adapter weights) is what vLLM loads — not the full weights/step_N tree."""
     steps = sorted(
         (job_dir / "weights").glob("step_*"), key=lambda p: int(p.name.split("_")[1])
     )
     if not steps:
         raise FileNotFoundError(f"no weights/step_* under {job_dir}")
-    return steps[-1]
+    adapter_dir = steps[-1] / "lora_adapters"
+    if not adapter_dir.is_dir():
+        raise FileNotFoundError(f"no lora_adapters under {steps[-1]}")
+    return adapter_dir
 
 
 async def _run_mock(adapter_id: str, documents: list[str], encryption_key: str) -> None:
@@ -144,6 +170,11 @@ async def _run(adapter_id: str, documents: list[str], encryption_key: str) -> No
     corpus_path = _write_corpus_ram(job_dir, documents)
     toml_path = _render_config(job_dir, corpus_path)
 
+    # Colocate the rollout inference server and the FSDP trainer on the single
+    # GPU. `rl` places one subprocess per entry in CUDA_VISIBLE_DEVICES, so
+    # listing device 0 twice puts both on GPU 0 (filesystem weight-broadcast,
+    # the default, needs no second GPU). The serving vLLM shares the same GPU.
+    env = {**os.environ, "CUDA_VISIBLE_DEVICES": "0,0"}
     proc = await asyncio.create_subprocess_exec(
         "uv",
         "run",
@@ -151,6 +182,7 @@ async def _run(adapter_id: str, documents: list[str], encryption_key: str) -> No
         "@",
         toml_path.as_posix(),
         cwd=REPO_DIR,
+        env=env,
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.DEVNULL,
     )
@@ -170,10 +202,19 @@ async def _run(adapter_id: str, documents: list[str], encryption_key: str) -> No
     _jobs[adapter_id] = {"status": "ready", "adapter_blob": blob.as_posix()}
 
 
+async def _safe_run(adapter_id: str, documents: list[str], encryption_key: str) -> None:
+    """Run the job, marking it failed on ANY exception so it never hangs at
+    'training' (a bare create_task swallows exceptions otherwise)."""
+    fn = _run_mock if MOCK_MODE else _run
+    try:
+        await fn(adapter_id, documents, encryption_key)
+    except Exception as e:  # noqa: BLE001 — surface every failure to the client
+        _jobs[adapter_id] = {"status": "failed", "error": repr(e)}
+
+
 def start(adapter_id: str, documents: list[str], encryption_key: str) -> None:
     _jobs[adapter_id] = {"status": "training"}
-    runner = _run_mock if MOCK_MODE else _run
-    asyncio.create_task(runner(adapter_id, documents, encryption_key))
+    asyncio.create_task(_safe_run(adapter_id, documents, encryption_key))
 
 
 def get(adapter_id: str) -> dict:

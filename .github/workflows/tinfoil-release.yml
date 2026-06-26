@@ -82,7 +82,7 @@ jobs:
         env: { SOURCE_DATE_EPOCH: 0 }
         with:
           context: .
-          file: containers/trainer/Dockerfile   # CPU mock; Dockerfile.gpu later
+          file: containers/trainer/Dockerfile.gpu # prime-rl + CUDA
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -115,7 +115,7 @@ jobs:
         env: { SOURCE_DATE_EPOCH: 0 }
         with:
           context: .
-          file: containers/serving/Dockerfile   # CPU mock; Dockerfile.gpu later
+          file: containers/serving/Dockerfile.gpu # vLLM multi-LoRA
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

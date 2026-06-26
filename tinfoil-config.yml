@@ -1,28 +1,31 @@
-# No-GPU (mock) deploy of the personalization demo. Three containers on one CVM,
-# each its own image (built + digest-pinned by .github/workflows/tinfoil-release.yml).
-# Exercises the full system — attestation, container networking, dual-key auth, the
-# real env + Tinfoil judge, end-to-end chat — everything except the GPU-bound
-# learning and adapter serving.
+# GPU deploy of the personalization demo. Three containers on one CVM with a
+# single H200 (`gpus: 1`), each its own image (built + digest-pinned by
+# .github/workflows/tinfoil-release.yml).
 #
-# When the H200 lands: add `gpus: 1` here, give trainer + serving `runtime: nvidia`
-# + `gpus: all`, and build them from containers/{trainer,serving}/Dockerfile.gpu
-# (prime-rl, vLLM). Modeled on enclaves/confidential-realtime-models.
+# Everything colocates on the one GPU:
+#   - trainer: `uv run rl` runs the FSDP trainer AND a rollout vLLM, both pinned
+#     to GPU 0 (CUDA_VISIBLE_DEVICES=0,0 in trainer_service/runner.py).
+#   - serving: a persistent multi-LoRA vLLM, also on GPU 0.
+# Each vLLM caps its VRAM (--gpu-memory-utilization / INFER_GPU_UTIL) so the
+# trainer, rollout server, and serving server all fit on ~141 GB. Tune the
+# fractions live if anything OOMs.
 #
 # Storage model (disk is NOT volume-encrypted):
 #   - corpus: socketed control -> trainer, kept in RAM; never persisted.
 #   - persistent `state` volume: only AES-GCM-encrypted adapter blobs.
-#   - decrypted adapters + prime-rl plaintext outputs: RAM only. On the GPU build,
-#     mount a shared ramdisk for DECRYPT_DIR (control+serving) and RAM_DIR
-#     (trainer) — e.g. under /mnt/ramdisk, like verifiable-reviewer. Mock writes
-#     nothing sensitive, so it doesn't need them.
+#   - decrypted adapters + prime-rl plaintext outputs: RAM only
+#     (/mnt/ramdisk/*, shared where serving must read what control decrypts).
+#   - base-model weights: public, downloaded once to the `hf-cache` volume and
+#     reused across rebuilds (avoids re-pulling Qwen3-4B every iteration).
 
 cvm-version: 0.10.4
-cpus: 8
-memory: 16384
+cpus: 16
+memory: 131072
+gpus: 1
 
 networks:
-  # trainer (judge) and serving (base model) call OUT to Tinfoil's gpt-oss-120b,
-  # so the network needs egress. (Could be tightened to an allowlist later.)
+  # trainer (judge) and serving call OUT to Tinfoil's gpt-oss-120b and to
+  # Hugging Face for the base-model weights, so the network needs egress.
   app:
     egress: open
 
@@ -59,17 +62,27 @@ containers:
 
   - name: "trainer"
     image: "ghcr.io/tinfoilsh/demo-personalization/trainer@sha256:0000000000000000000000000000000000000000000000000000000000000000" # placeholder - populated during release
+    runtime: nvidia
+    gpus: all
+    ipc: host # NVIDIA runtime shares memory with host processes
     restart: always
     networks: ["app"]
     env:
       - STATE_DIR: "/state"
-      - MOCK_MODE: "1"
-      - RAM_DIR: "/mnt/ramdisk/jobs" # corpus + prime-rl plaintext outputs (real path)
+      - RAM_DIR: "/mnt/ramdisk/jobs" # corpus + prime-rl plaintext outputs (RAM)
+      - HF_HOME: "/hf-cache" # base-model weights (read-only rootfs needs this off ~/.cache)
+      - UV_NO_SYNC: "1" # /app is read-only in the image; don't let `uv run` try to re-sync
     secrets:
       - TINFOIL_API_KEY # the in-enclave judge (gpt-oss-120b)
     volumes:
       - "state:/state" # writes encrypted adapter blobs here
-      - "/mnt/ramdisk/jobs:/mnt/ramdisk/jobs" # RAM (real path); mock writes nothing
+      - "/mnt/ramdisk/jobs:/mnt/ramdisk/jobs" # RAM: corpus, rl.toml, plaintext weights
+      - "hf-cache:/hf-cache" # base-model weights, shared with serving
+    tmpfs:
+      # rootfs is read-only; the Tinfoil SDK caches sigstore material and
+      # torch/triton/vllm cache to ~/.cache and /tmp, so both must be writable.
+      /root: size=2g,mode=0700,exec
+      /tmp: size=2g,mode=1777,exec
     command: [
         "uvicorn",
         "trainer_service.app:app",
@@ -88,30 +101,48 @@ containers:
 
   - name: "serving"
     image: "ghcr.io/tinfoilsh/demo-personalization/serving@sha256:0000000000000000000000000000000000000000000000000000000000000000" # placeholder - populated during release
+    runtime: nvidia
+    gpus: all
+    ipc: host
     restart: always
     networks: ["app"]
-    secrets:
-      - TINFOIL_API_KEY # base model (gpt-oss-120b) in mock
+    env:
+      - HF_HOME: "/hf-cache"
     volumes:
-      # Real vLLM reads decrypted adapters from this shared RAM dir (control writes
-      # them). Unused by serving_mock, but kept so the topology matches the GPU build.
+      # Real vLLM reads decrypted adapters from this shared RAM dir (control
+      # writes them). Adapters are loaded at runtime, never baked into the image.
       - "/mnt/ramdisk/adapters:/mnt/ramdisk/adapters"
+      - "hf-cache:/hf-cache" # base-model weights, shared with trainer
+    tmpfs:
+      /root: size=2g,mode=0700,exec
+      /tmp: size=2g,mode=1777,exec
+    # Multi-LoRA vLLM. --gpu-memory-utilization is low so the trainer's FSDP +
+    # rollout vLLM fit on the same GPU; raise it if there's spare VRAM.
+    entrypoint: ["vllm", "serve"]
     command:
       [
-        "uvicorn",
-        "serving_mock.app:app",
+        "Qwen/Qwen3-4B-Instruct-2507",
+        "--served-model-name",
+        "Qwen/Qwen3-4B-Instruct-2507",
+        "--enable-lora",
+        "--max-lora-rank",
+        "32",
+        "--max-loras",
+        "4",
+        "--max-cpu-loras",
+        "16",
+        "--gpu-memory-utilization",
+        "0.2",
         "--host",
         "0.0.0.0",
         "--port",
         "8000",
-        "--workers",
-        "1",
       ]
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8000/docs"]
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
       interval: 30s
       timeout: 5s
-      start_period: 1m
+      start_period: 10m # cold model download + load
 
 shim:
   upstream-port: 9000
