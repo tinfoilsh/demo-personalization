@@ -33,7 +33,11 @@ BASE_MODEL = os.environ.get("BASE_MODEL", "Qwen/Qwen3-4B-Instruct-2507")
 MAX_STEPS = int(os.environ.get("MAX_STEPS", "50"))
 LORA_RANK = int(os.environ.get("LORA_RANK", "32"))
 ENV_ID = os.environ.get("ENV_ID", "personal-style")
-REPO_DIR = Path(__file__).resolve().parent.parent
+# Working dir for `uv run rl`: locally the repo, in the GPU image prime-rl's own
+# uv project (/app), where the `rl` entrypoint and its venv live.
+RL_PROJECT_DIR = Path(
+    os.environ.get("RL_PROJECT_DIR", Path(__file__).resolve().parent.parent)
+)
 
 MOCK_MODE = os.environ.get("MOCK_MODE", "0") == "1"
 MOCK_N = int(os.environ.get("MOCK_N", "3"))
@@ -181,7 +185,7 @@ async def _run(adapter_id: str, documents: list[str], encryption_key: str) -> No
         "rl",
         "@",
         toml_path.as_posix(),
-        cwd=REPO_DIR,
+        cwd=RL_PROJECT_DIR,
         env=env,
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.DEVNULL,

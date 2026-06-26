@@ -1,24 +1,39 @@
-# trainer image — GPU (real training). Used once the H200 is available; point the
-# trainer container's build at this file and drop MOCK_MODE in tinfoil-config.yml.
+# Trainer image — GPU (real training). Rebased on prime-rl's prebuilt CUDA image
+# instead of building prime-rl ourselves: it already ships torch, vLLM,
+# flash-attn, verifiers and the `rl` entrypoint, all matched to the right CUDA.
+# Building prime-rl from scratch here is a multi-stage UCX/flash-attn build and
+# fails on small things (e.g. ubuntu22.04 has no python3.12).
 #
-# Holds prime-rl + the personal_style env + the Tinfoil SDK (for the judge). The
-# trainer_service shells out to `uv run rl`, which supervises rollout-inference +
-# orchestrator + env-server + trainer for one job.
-#
-# Untested without a GPU — the shape is right; pin versions when you run it.
-FROM nvidia/cuda:12.4.1-devel-ubuntu22.04
+# Pinned to commit-eb89285 (== the prime-rl revision the rl.toml was validated
+# against). Bump the digest to move prime-rl forward.
+FROM primeintellect/prime-rl@sha256:d26e88fbefdd9fe093eefb73b64cedd11e4bdc4b6c664839c611499c5602af28
 
-ENV NVIDIA_VISIBLE_DEVICES=0 STATE_DIR=/state
-RUN apt-get update && apt-get install -y python3.12 python3-pip git curl && rm -rf /var/lib/apt/lists/*
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-ENV PATH="/root/.local/bin:/app/.venv/bin:${PATH}"
+# Root so the read-only-rootfs HOME (=/root, backed by tmpfs in the CVM) holds
+# the Tinfoil SDK's sigstore cache, and so we can install into the baked venv.
+USER root
 
-WORKDIR /app
-COPY . .
-# prime-rl provides the `rl` entrypoint that `uv run rl` invokes.
-RUN uv add "prime-rl @ git+https://github.com/PrimeIntellect-ai/prime-rl" \
- && uv sync --all-extras \
- && uv run vf-install personal_style -p environments   # register our env by id
+# Runtime deps first (rarely change) so editing our code below doesn't bust this
+# layer — keeps local rebuilds fast.
+RUN uv pip install --python /app/.venv/bin/python \
+        fastapi "uvicorn[standard]" httpx cryptography "tinfoil>=0.11.5" \
+        datasets jsonschema
+
+# The writing-style env, registered into prime-rl's venv (changes occasionally).
+COPY environments /srv/environments
+RUN uv pip install --python /app/.venv/bin/python /srv/environments/personal_style
+
+# Our service code (changes most often) — copied last so a code edit only
+# rebuilds these tiny layers. Kept out of /app (prime-rl's own uv project) and
+# put on PYTHONPATH; `uv run rl` still runs from /app.
+COPY tinfoil_llm /srv/tinfoil_llm
+COPY cryptobox /srv/cryptobox
+COPY trainer_service /srv/trainer_service
+
+ENV PYTHONPATH=/srv \
+    STATE_DIR=/state \
+    RL_PROJECT_DIR=/app \
+    UV_CACHE_DIR=/tmp/uv-cache
 
 EXPOSE 9100
+# ENTRYPOINT (/app/docker-entrypoint.sh: ulimit + exec "$@") is inherited.
 CMD ["uvicorn", "trainer_service.app:app", "--host", "0.0.0.0", "--port", "9100"]
