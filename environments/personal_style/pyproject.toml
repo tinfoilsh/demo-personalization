@@ -1,0 +1,21 @@
+[project]
+name = "personal-style"
+version = "0.1.0"
+description = "RL environment that rewards writing like a specific user (judge on Tinfoil)."
+requires-python = ">=3.11"
+dependencies = [
+    "verifiers",
+    "tinfoil>=0.11.5",
+    "datasets",
+    "jsonschema",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build]
+include = ["personal_style.py"]
+
+[tool.hatch.build.targets.wheel]
+include = ["personal_style.py"]
