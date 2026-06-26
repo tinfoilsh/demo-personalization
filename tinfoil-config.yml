@@ -31,7 +31,7 @@ networks:
 
 containers:
   - name: "control"
-    image: "ghcr.io/tinfoilsh/demo-personalization/control@sha256:0000000000000000000000000000000000000000000000000000000000000000" # placeholder - populated during release
+    image: "ghcr.io/tinfoilsh/demo-personalization/control@sha256:e9ba3ee825e9a61b1abdd53e7e4344e8641359141a2cbacb37f151325abd20e0" # v0.0.5
     restart: always
     networks: ["app"]
     env:
@@ -61,7 +61,7 @@ containers:
       start_period: 1m
 
   - name: "trainer"
-    image: "ghcr.io/tinfoilsh/demo-personalization/trainer@sha256:0000000000000000000000000000000000000000000000000000000000000000" # placeholder - populated during release
+    image: "ghcr.io/tinfoilsh/demo-personalization/trainer@sha256:0d6341d6f18a5e26dad8de4d30b662dfc70faa77066fbb0dcc146dbea5ee664d" # v0.0.5
     runtime: nvidia
     gpus: all
     ipc: host # NVIDIA runtime shares memory with host processes
@@ -101,7 +101,7 @@ containers:
       start_period: 1m
 
   - name: "serving"
-    image: "ghcr.io/tinfoilsh/demo-personalization/serving@sha256:0000000000000000000000000000000000000000000000000000000000000000" # placeholder - populated during release
+    image: "ghcr.io/tinfoilsh/demo-personalization/serving@sha256:b6d5777f0a1e08585b084f8b9ef54fc9768d90244208a9cf543569184c9f770b" # v0.0.5
     runtime: nvidia
     gpus: all
     ipc: host
