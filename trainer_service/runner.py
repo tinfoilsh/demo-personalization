@@ -81,7 +81,7 @@ save_adapter_separately = true
 save_sharded = false
 
 [trainer.optim]
-lr = 1e-5
+lr = 2e-5
 
 [orchestrator]
 batch_size = 128
