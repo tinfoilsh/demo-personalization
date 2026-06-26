@@ -32,11 +32,21 @@ containers:
       - STATE_DIR: "/state"
       - SERVING_URL: "http://serving:8000"
       - TRAINER_URL: "http://trainer:9100"
+      - DECRYPT_DIR: "/mnt/ramdisk/adapters" # decrypts blobs into RAM, shared with serving
     secrets:
       - DEMO_KEY
     volumes:
-      - "state:/state"
-    command: ["uvicorn", "control_server.app:app", "--host", "0.0.0.0", "--port", "9000"]
+      - "state:/state" # encrypted adapter blobs
+      - "/mnt/ramdisk/adapters:/mnt/ramdisk/adapters" # RAM, shared with serving (decrypted)
+    command:
+      [
+        "uvicorn",
+        "control_server.app:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "9000",
+      ]
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:9000/docs"]
       interval: 30s
@@ -50,11 +60,21 @@ containers:
     env:
       - STATE_DIR: "/state"
       - MOCK_MODE: "1"
+      - RAM_DIR: "/mnt/ramdisk/jobs" # corpus + prime-rl plaintext outputs (real path)
     secrets:
-      - TINFOIL_API_KEY   # the in-enclave judge (gpt-oss-120b)
+      - TINFOIL_API_KEY # the in-enclave judge (gpt-oss-120b)
     volumes:
-      - "state:/state"
-    command: ["uvicorn", "trainer_service.app:app", "--host", "0.0.0.0", "--port", "9100"]
+      - "state:/state" # writes encrypted adapter blobs here
+      - "/mnt/ramdisk/jobs:/mnt/ramdisk/jobs" # RAM (real path); mock writes nothing
+    command:
+      [
+        "uvicorn",
+        "trainer_service.app:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "9100",
+      ]
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:9100/docs"]
       interval: 30s
@@ -66,8 +86,13 @@ containers:
     restart: always
     networks: ["app"]
     secrets:
-      - TINFOIL_API_KEY   # base model (gpt-oss-120b) in mock
-    command: ["uvicorn", "serving_mock.app:app", "--host", "0.0.0.0", "--port", "8000"]
+      - TINFOIL_API_KEY # base model (gpt-oss-120b) in mock
+    volumes:
+      # Real vLLM reads decrypted adapters from this shared RAM dir (control writes
+      # them). Unused by serving_mock, but kept so the topology matches the GPU build.
+      - "/mnt/ramdisk/adapters:/mnt/ramdisk/adapters"
+    command:
+      ["uvicorn", "serving_mock.app:app", "--host", "0.0.0.0", "--port", "8000"]
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8000/docs"]
       interval: 30s
@@ -78,7 +103,7 @@ shim:
   upstream-port: 9000
   upstream-container: control
   tls-wildcard: true
-  authenticated: false   # control enforces its own dual-key auth
+  authenticated: false # control enforces its own dual-key auth
   paths:
     - /train
     - /status

@@ -9,6 +9,7 @@ separate, always-up process from any single training run — it outlives them.
 
 from contextlib import asynccontextmanager
 
+import httpx
 from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel
 
@@ -61,9 +62,15 @@ async def chat(body: dict, principal: Principal = Depends(authenticate)) -> dict
         raise HTTPException(
             status_code=409, detail=f"adapter not ready (status={state.status})"
         )
-    # If serving restarted, its RAM is gone but the encrypted blob survives —
-    # re-decrypt with the user's key and reload before proxying.
-    if state.adapter_blob and not state.loaded:
-        await training.load_adapter(principal, state.adapter_blob)
-        registry.set_status(principal.user_id, "ready", loaded=True)
-    return await serving.chat(principal.adapter_name, body)
+    try:
+        return await serving.chat(principal.adapter_name, body)
+    except httpx.HTTPStatusError as e:
+        # Serving may have restarted and lost its in-RAM adapters while control
+        # kept its state — vLLM 404s the unknown model. The encrypted blob on disk
+        # survives, so re-decrypt with the user's key and retry once. (No flag to
+        # trust: we react to serving's actual state, not our memory of it.)
+        if state.adapter_blob and e.response.status_code in (400, 404):
+            await training.load_adapter(principal, state.adapter_blob)
+            registry.set_status(principal.user_id, "ready", loaded=True)
+            return await serving.chat(principal.adapter_name, body)
+        raise
