@@ -353,7 +353,6 @@ def default_format_data_fn(example):
             "story_snippet": example["story_snippet"],
             "actual_continuation": example["actual_continuation"],
         },
-        "task": "style-matching",
     }
 
 

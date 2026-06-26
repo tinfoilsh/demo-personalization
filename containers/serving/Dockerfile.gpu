@@ -2,6 +2,13 @@
 # point the serving container's build at this file. Stock vLLM; holds the base
 # model + every user's finished adapter, with runtime LoRA loading so the control
 # server can hot-load new adapters without a restart.
+#
+# !!! KNOWN BLOCKER (2026-06-26): `:latest` resolved to vLLM v0.23.0, which serves
+# Qwen/Qwen3-4B-Instruct-2507 as DETERMINISTIC GARBAGE on the H200 (base model
+# included; transformers serves the same weights correctly). Reproduces across
+# V0/V1, --enforce-eager, and every VLLM_ATTENTION_BACKEND (env is ignored,
+# stuck on FLASH_ATTN). PIN a known-good vLLM version here and verify a coherent
+# base-model completion before relying on it. 
 FROM vllm/vllm-openai:latest
 
 ENV VLLM_ALLOW_RUNTIME_LORA_UPDATING=True
