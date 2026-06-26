@@ -14,12 +14,13 @@ app = FastAPI(title="prime-rl trainer service")
 
 class JobRequest(BaseModel):
     job_id: str
-    corpus_path: str  # on the shared volume, written by control
+    documents: list[str]   # socketed in, never written to persistent disk
+    encryption_key: str    # encrypts the resulting adapter at rest (real mode)
 
 
 @app.post("/jobs")
 def create_job(req: JobRequest) -> dict:
-    runner.start(req.job_id, req.corpus_path)
+    runner.start(req.job_id, req.documents, req.encryption_key)
     return {"job_id": req.job_id, "status": "training"}
 
 

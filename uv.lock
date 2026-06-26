@@ -503,6 +503,7 @@ name = "demo-personalization"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "cryptography" },
     { name = "datasets" },
     { name = "fastapi" },
     { name = "httpx" },
@@ -517,6 +518,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "cryptography" },
     { name = "datasets" },
     { name = "fastapi" },
     { name = "httpx" },

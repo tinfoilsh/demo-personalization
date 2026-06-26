@@ -18,7 +18,8 @@ from control_server.auth import Principal, authenticate
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    config.DATA_DIR.mkdir(parents=True, exist_ok=True)
+    config.ADAPTERS_DIR.mkdir(parents=True, exist_ok=True)
+    config.DECRYPT_DIR.mkdir(parents=True, exist_ok=True)
     yield
 
 
@@ -60,4 +61,9 @@ async def chat(body: dict, principal: Principal = Depends(authenticate)) -> dict
         raise HTTPException(
             status_code=409, detail=f"adapter not ready (status={state.status})"
         )
+    # If serving restarted, its RAM is gone but the encrypted blob survives —
+    # re-decrypt with the user's key and reload before proxying.
+    if state.adapter_blob and not state.loaded:
+        await training.load_adapter(principal, state.adapter_blob)
+        registry.set_status(principal.user_id, "ready", loaded=True)
     return await serving.chat(principal.adapter_name, body)

@@ -19,7 +19,8 @@ class UserState:
     adapter_name: str
     status: Status = "none"
     job_id: str | None = None
-    adapter_path: str | None = None
+    adapter_blob: str | None = None  # encrypted blob on persistent disk (None in mock)
+    loaded: bool = False             # decrypted + registered in serving this lifetime
     error: str | None = None
 
 

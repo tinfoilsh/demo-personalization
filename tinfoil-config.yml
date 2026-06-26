@@ -7,6 +7,14 @@
 # When the H200 lands: add `gpus: 1` here, give trainer + serving `runtime: nvidia`
 # + `gpus: all`, and build them from containers/{trainer,serving}/Dockerfile.gpu
 # (prime-rl, vLLM). Modeled on enclaves/confidential-realtime-models.
+#
+# Storage model (disk is NOT volume-encrypted):
+#   - corpus: socketed control -> trainer, kept in RAM; never persisted.
+#   - persistent `state` volume: only AES-GCM-encrypted adapter blobs.
+#   - decrypted adapters + prime-rl plaintext outputs: RAM only. On the GPU build,
+#     mount a shared ramdisk for DECRYPT_DIR (control+serving) and RAM_DIR
+#     (trainer) — e.g. under /mnt/ramdisk, like verifiable-reviewer. Mock writes
+#     nothing sensitive, so it doesn't need them.
 
 cvm-version: 0.10.4
 cpus: 8
