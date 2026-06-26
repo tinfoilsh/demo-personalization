@@ -29,7 +29,11 @@ RAM_DIR = Path(os.environ.get("RAM_DIR", "/dev/shm/personalization")).resolve()
 STATE_DIR = Path(os.environ.get("STATE_DIR", "./state")).resolve()
 ADAPTERS_DIR = STATE_DIR / "adapters"
 
-BASE_MODEL = os.environ.get("BASE_MODEL", "Qwen/Qwen3-4B-Instruct-2507")
+BASE_MODEL = os.environ.get("BASE_MODEL", "meta-llama/Llama-3.1-8B-Instruct")
+# prime-rl picks a chat-template renderer per model; Llama-3.1-8B isn't in its
+# MODEL_RENDERER_MAP, so name it explicitly (template-identical to the mapped
+# Llama-3.2 Instruct models).
+RENDERER = os.environ.get("RENDERER", "llama-3")
 MAX_STEPS = int(os.environ.get("MAX_STEPS", "50"))
 LORA_RANK = int(os.environ.get("LORA_RANK", "32"))
 ENV_ID = os.environ.get("ENV_ID", "personal-style")
@@ -45,7 +49,7 @@ MOCK_R = int(os.environ.get("MOCK_R", "2"))
 
 # VRAM fraction for the rollout inference server. Capped (< serving + trainer
 # must all fit on the single GPU); tune live. See _run for the colocation env.
-INFER_GPU_UTIL = os.environ.get("INFER_GPU_UTIL", "0.2")
+INFER_GPU_UTIL = os.environ.get("INFER_GPU_UTIL", "0.4")
 
 RL_TOML = """\
 max_steps = {max_steps}
@@ -61,16 +65,20 @@ name = "{base_model}"
 rank = {lora_rank}
 alpha = {lora_alpha}
 
-# Skip the full training checkpoint (optimizer + dataloader state, ~17 GB for a
-# 4B model). We never resume, and the RAM-backed tmpfs OOMs writing it; we only
-# need the weight checkpoint's adapter.
+# We never resume and the RAM-backed tmpfs is tight, so keep nothing but the LoRA
+# adapter. weights_only drops the optimizer/dataloader state; skip_gather avoids
+# materialising the full base model in RAM at checkpoint time (a ~16 GB gather for
+# the 8B that OOMs the host).
 [trainer.ckpt]
 weights_only = true
+skip_gather_master_weights = true
 
-# Write the LoRA adapter on its own (weights/step_N/lora_adapters, PEFT format)
-# so vLLM can load just the adapter instead of a merged full-model checkpoint.
+# Save only the LoRA adapter (PEFT format), never a full-model copy. The trained
+# adapter is broadcast to <output_dir>/run_*/broadcasts/step_N each step;
+# _final_adapter_dir reads the last one.
 [trainer.ckpt.weights]
 save_adapter_separately = true
+save_sharded = false
 
 [trainer.optim]
 lr = 1e-5
@@ -78,6 +86,9 @@ lr = 1e-5
 [orchestrator]
 batch_size = 128
 group_size = 8
+
+[orchestrator.renderer]
+name = "{renderer}"
 
 # Rollouts must run against the adapter being trained, not the base model.
 [orchestrator.model.lora]
@@ -122,6 +133,7 @@ def _render_config(job_dir: Path, corpus_path: Path) -> Path:
             max_steps=MAX_STEPS,
             output_dir=job_dir.as_posix(),
             base_model=BASE_MODEL,
+            renderer=RENDERER,
             lora_rank=LORA_RANK,
             lora_alpha=LORA_RANK * 2,
             env_id=ENV_ID,
@@ -133,18 +145,22 @@ def _render_config(job_dir: Path, corpus_path: Path) -> Path:
 
 
 def _final_adapter_dir(job_dir: Path) -> Path:
-    """With save_adapter_separately, prime-rl writes the PEFT LoRA adapter to
-    <output_dir>/weights/step_N/lora_adapters. That dir (adapter_config.json +
-    adapter weights) is what vLLM loads — not the full weights/step_N tree."""
+    """prime-rl broadcasts the PEFT LoRA adapter (adapter_config.json +
+    adapter_model.safetensors) to <output_dir>/run_*/broadcasts/step_N each step.
+    With skip_gather_master_weights the trainer writes no weights/ checkpoint (that
+    would gather the full base model and OOM the RAM-backed host), so the last
+    broadcast IS the final trained adapter — that's what vLLM loads."""
     steps = sorted(
-        (job_dir / "weights").glob("step_*"), key=lambda p: int(p.name.split("_")[1])
+        (
+            p
+            for p in job_dir.glob("**/broadcasts/step_*")
+            if (p / "adapter_config.json").is_file()
+        ),
+        key=lambda p: int(p.name.split("_")[1]),
     )
     if not steps:
-        raise FileNotFoundError(f"no weights/step_* under {job_dir}")
-    adapter_dir = steps[-1] / "lora_adapters"
-    if not adapter_dir.is_dir():
-        raise FileNotFoundError(f"no lora_adapters under {steps[-1]}")
-    return adapter_dir
+        raise FileNotFoundError(f"no broadcasts/step_*/adapter_config.json under {job_dir}")
+    return steps[-1]
 
 
 async def _run_mock(adapter_id: str, documents: list[str], encryption_key: str) -> None:
@@ -185,6 +201,10 @@ async def _run(adapter_id: str, documents: list[str], encryption_key: str) -> No
     # listing device 0 twice puts both on GPU 0 (filesystem weight-broadcast,
     # the default, needs no second GPU). The serving vLLM shares the same GPU.
     env = {**os.environ, "CUDA_VISIBLE_DEVICES": "0,0"}
+    # Llama is gated; prod provides the token as LLAMA_HF_TOKEN, but HF reads
+    # HF_TOKEN — bridge it for the `uv run rl` model download.
+    if env.get("LLAMA_HF_TOKEN"):
+        env["HF_TOKEN"] = env["LLAMA_HF_TOKEN"]
     # rl's full output goes to a log file in the job dir (RAM) so failures are
     # debuggable — `tail` it at {RAM_DIR}/{adapter_id}/rl.log.
     log_path = job_dir / "rl.log"
