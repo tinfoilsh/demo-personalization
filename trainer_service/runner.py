@@ -35,7 +35,7 @@ BASE_MODEL = os.environ.get("BASE_MODEL", "meta-llama/Llama-3.1-8B-Instruct")
 # Llama-3.2 Instruct models).
 RENDERER = os.environ.get("RENDERER", "llama-3")
 MAX_STEPS = int(os.environ.get("MAX_STEPS", "60"))
-LORA_RANK = int(os.environ.get("LORA_RANK", "64"))
+LORA_RANK = int(os.environ.get("LORA_RANK", "32"))
 ENV_ID = os.environ.get("ENV_ID", "personal-style")
 # Working dir for `uv run rl`: locally the repo, in the GPU image prime-rl's own
 # uv project (/app), where the `rl` entrypoint and its venv live.
