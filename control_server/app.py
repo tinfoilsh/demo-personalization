@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from control_server import config, registry, serving, training
-from control_server.auth import Principal, authenticate
+from control_server.auth import authenticate, principal
 
 
 @asynccontextmanager
@@ -40,15 +40,19 @@ app.add_middleware(
 
 class TrainRequest(BaseModel):
     documents: list[str]
+    encryption_key: str
+
+
+class StatusRequest(BaseModel):
+    encryption_key: str
 
 
 @app.post("/train")
-async def train(
-    req: TrainRequest, principal: Principal = Depends(authenticate)
-) -> dict:
+async def train(req: TrainRequest, _: None = Depends(authenticate)) -> dict:
+    p = principal(req.encryption_key)
     if not req.documents:
         raise HTTPException(status_code=400, detail="no documents")
-    if registry.get(principal.adapter_id)["status"] == "training":
+    if registry.get(p.adapter_id)["status"] == "training":
         raise HTTPException(status_code=409, detail="already training")
     # One GPU, one job at a time — don't queue, just tell the caller to retry.
     if registry.is_training_active():
@@ -56,31 +60,33 @@ async def train(
             status_code=409,
             detail="another training job is in progress; this demo trains one at a time — check back in a few minutes",
         )
-    training.start_training(principal, req.documents)
-    return {"adapter": principal.adapter_name, "status": "training"}
+    training.start_training(p, req.documents)
+    return {"adapter": p.adapter_name, "status": "training"}
 
 
-@app.get("/status")
-def status(principal: Principal = Depends(authenticate)) -> dict:
-    return {"adapter": principal.adapter_name, **registry.get(principal.adapter_id)}
+@app.post("/status")
+def status(req: StatusRequest, _: None = Depends(authenticate)) -> dict:
+    p = principal(req.encryption_key)
+    return {"adapter": p.adapter_name, **registry.get(p.adapter_id)}
 
 
 @app.post("/v1/chat/completions")
-async def chat(body: dict, principal: Principal = Depends(authenticate)) -> dict:
+async def chat(body: dict, _: None = Depends(authenticate)) -> dict:
+    p = principal(body.pop("encryption_key", ""))
     # Demo side-by-side: `use_base: true` routes to the base model instead of the
     # caller's adapter (base is always loaded, so no readiness check or fallback).
     if body.pop("use_base", False):
         return await serving.chat(config.BASE_MODEL, body)
-    if registry.get(principal.adapter_id)["status"] != "ready":
+    if registry.get(p.adapter_id)["status"] != "ready":
         raise HTTPException(status_code=409, detail="adapter not ready")
     try:
-        return await serving.chat(principal.adapter_name, body)
+        return await serving.chat(p.adapter_name, body)
     except httpx.HTTPStatusError as e:
         # Serving may have restarted and lost its in-RAM adapters — vLLM 404s the
         # unknown model. The encrypted blob on disk survives, so re-decrypt with the
         # user's key and retry once. (No flag to trust: we react to serving's actual
         # state, not our memory of it.)
-        if registry.blob_path(principal.adapter_id).exists() and e.response.status_code in (400, 404):
-            await training.load_adapter(principal)
-            return await serving.chat(principal.adapter_name, body)
+        if registry.blob_path(p.adapter_id).exists() and e.response.status_code in (400, 404):
+            await training.load_adapter(p)
+            return await serving.chat(p.adapter_name, body)
         raise
