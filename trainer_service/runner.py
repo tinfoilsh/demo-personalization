@@ -190,6 +190,23 @@ async def _run_mock(adapter_id: str, documents: list[str], encryption_key: str) 
     }
 
 
+def _prefetch_base_model(token: str | None) -> bool:
+    """Cache the base model WITHOUT the Meta `original/` checkpoint — a ~16 GB
+    consolidated .pth that nothing reads (vLLM and prime-rl both load the HF
+    safetensors). prime-rl's own snapshot_download has no ignore_patterns, so it
+    pulls the whole repo; we pre-fetch the trimmed set, then run rl with
+    HF_HUB_OFFLINE=1 so it uses this cache as-is. The host runs everything in a
+    RAM-backed tmpfs, so that 16 GB is the difference between fitting and OOM.
+    Returns True if the cache is ready (safe to go offline)."""
+    from huggingface_hub import snapshot_download
+
+    try:
+        snapshot_download(BASE_MODEL, ignore_patterns=["original/*"], token=token)
+        return True
+    except Exception:  # noqa: BLE001 — network/auth hiccup: fall back to online rl
+        return False
+
+
 async def _run(adapter_id: str, documents: list[str], encryption_key: str) -> None:
     job_dir = RAM_DIR / adapter_id  # RAM: corpus, toml, plaintext weights
     job_dir.mkdir(parents=True, exist_ok=True)
@@ -205,6 +222,10 @@ async def _run(adapter_id: str, documents: list[str], encryption_key: str) -> No
     # HF_TOKEN — bridge it for the `uv run rl` model download.
     if env.get("LLAMA_HF_TOKEN"):
         env["HF_TOKEN"] = env["LLAMA_HF_TOKEN"]
+    # Pre-fetch the model minus the unused 16 GB `original/` checkpoint, then run
+    # rl offline so prime-rl can't re-pull it (see _prefetch_base_model).
+    if _prefetch_base_model(env.get("HF_TOKEN")):
+        env["HF_HUB_OFFLINE"] = "1"
     # rl's full output goes to a log file in the job dir (RAM) so failures are
     # debuggable — `tail` it at {RAM_DIR}/{adapter_id}/rl.log.
     log_path = job_dir / "rl.log"
