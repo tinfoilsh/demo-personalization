@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from control_server import config, registry, serving, training
@@ -25,6 +26,16 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="tinfoil personalization control server", lifespan=lifespan)
+
+# Browser front-end calls this from another origin. Auth is via custom headers
+# (x-demo-key / x-encryption-key), not cookies, so no credentials needed — which
+# lets us allow any origin for the demo. Lock this down to the real origin later.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 class TrainRequest(BaseModel):
