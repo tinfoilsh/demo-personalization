@@ -39,6 +39,12 @@ async def train(
         raise HTTPException(status_code=400, detail="no documents")
     if registry.get(principal.adapter_id)["status"] == "training":
         raise HTTPException(status_code=409, detail="already training")
+    # One GPU, one job at a time — don't queue, just tell the caller to retry.
+    if registry.is_training_active():
+        raise HTTPException(
+            status_code=409,
+            detail="another training job is in progress; this demo trains one at a time — check back in a few minutes",
+        )
     training.start_training(principal, req.documents)
     return {"adapter": principal.adapter_name, "status": "training"}
 
