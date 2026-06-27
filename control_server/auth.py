@@ -1,6 +1,12 @@
 """Auth. A shared demo key gates access; the per-request encryption key IS the
 identity — there is no user/account concept.
 
+The demo key travels as a header (X-Demo-Key): it only gates access, so it's fine
+for the Tinfoil shim/router to see it. The encryption key, by contrast, decrypts
+the user's private adapter — it must never be visible to Tinfoil. EHBP encrypts
+the request body but leaves headers in plaintext, so the encryption key travels
+in the JSON body (read by each endpoint), not a header.
+
 The key deterministically derives a public `adapter_id` (used as the blob filename
 and the vLLM model name) and, separately, the AES key that encrypts the blob. The
 two derivations are domain-separated, so the public id (a filename on disk) reveals
@@ -32,12 +38,16 @@ class Principal:
         return f"adapter-{self.adapter_id}"
 
 
-def authenticate(
-    x_demo_key: str = Header(...),
-    x_encryption_key: str = Header(...),
-) -> Principal:
+def authenticate(x_demo_key: str = Header(...)) -> None:
+    """Validate the demo key (header). The encryption key travels in the encrypted
+    request body — see principal()."""
     if x_demo_key != config.DEMO_KEY:
         raise HTTPException(status_code=401, detail="bad demo key")
-    if len(x_encryption_key) < 8:
+
+
+def principal(encryption_key: str) -> Principal:
+    """Validate the encryption key (from the EHBP-encrypted body) and build the
+    Principal. Only the verified enclave ever sees this key."""
+    if len(encryption_key) < 8:
         raise HTTPException(status_code=401, detail="encryption key too short")
-    return Principal(encryption_key=x_encryption_key)
+    return Principal(encryption_key=encryption_key)
