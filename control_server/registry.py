@@ -30,3 +30,9 @@ def get(adapter_id: str) -> dict:
     if blob_path(adapter_id).exists():
         return {**_status.get(adapter_id, {}), "status": "ready"}
     return _status.get(adapter_id, {"status": "none"})
+
+
+def is_training_active() -> bool:
+    """True if any job is mid-training. The single GPU trains one at a time, so
+    /train rejects new jobs while one is running rather than queueing them."""
+    return any(v.get("status") == "training" for v in _status.values())
