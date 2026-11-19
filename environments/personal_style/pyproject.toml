@@ -5,7 +5,7 @@ description = "RL environment that rewards writing like a specific user (judge o
 requires-python = ">=3.11"
 dependencies = [
     "verifiers",
-    "tinfoil>=0.11.5",
+    "tinfoil==0.16.0rc3",
     "datasets",
     "jsonschema",
 ]
