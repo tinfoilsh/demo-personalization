@@ -168,11 +168,11 @@ async def _run_mock(adapter_id: str, documents: list[str], encryption_key: str) 
     nothing on disk (corpus stays in memory)."""
     from personal_style import load_environment
 
-    from tinfoil_llm import POLICY_MODEL, policy_client
+    from tinfoil_llm import POLICY_MODEL, judge_client, policy_client
 
-    env = load_environment(user_texts=documents)
+    env = load_environment(user_texts=documents, judge_client=await judge_client())
     results = await env.evaluate(
-        client=policy_client(),
+        client=await policy_client(),
         model=POLICY_MODEL,
         num_examples=MOCK_N,
         rollouts_per_example=MOCK_R,

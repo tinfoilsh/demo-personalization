@@ -23,7 +23,7 @@ PROMPT = (
 
 
 async def main() -> None:
-    client = judge_client()
+    client = await judge_client()
     resp = await client.chat.completions.create(
         model=JUDGE_MODEL,
         messages=[{"role": "user", "content": PROMPT}],

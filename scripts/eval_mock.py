@@ -21,7 +21,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from personal_style import load_environment
-from tinfoil_llm import policy_client, POLICY_MODEL
+from tinfoil_llm import judge_client, policy_client, POLICY_MODEL
 
 load_dotenv()
 
@@ -35,9 +35,9 @@ async def main() -> None:
     n = int(os.environ.get("N", "3"))
     r = int(os.environ.get("R", "2"))
 
-    # Judge is built inside the env (verified Tinfoil client by default).
-    env = load_environment()
-    client = policy_client()
+    # The judge is a verified Tinfoil client.
+    env = load_environment(judge_client=await judge_client())
+    client = await policy_client()
 
     print(f"policy model: {POLICY_MODEL}   examples: {n}   rollouts/example: {r}")
     results = await env.evaluate(

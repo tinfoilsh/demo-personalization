@@ -24,7 +24,7 @@ def load_lora_adapter(body: dict) -> dict:
 @app.post("/v1/chat/completions")
 async def chat_completions(body: dict) -> dict:
     # Ignore the per-user adapter in `model`; serve the base model from Tinfoil.
-    resp = await policy_client().chat.completions.create(
+    resp = await (await policy_client()).chat.completions.create(
         model=POLICY_MODEL,
         messages=body.get("messages", []),
         temperature=body.get("temperature", 0.7),
